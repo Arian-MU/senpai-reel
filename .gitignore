@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# Environment variables / secrets
+.env
+.streamlit/secrets.toml
+*.key
+*.pem
+
+# Database files (large binary, do not commit)
+*.duckdb
+*.duckdb.wal
+*.db
+*.sqlite
+
+# Downloaded media (never commit videos/audio)
+downloads/
+audio_extracts/
+data/raw/
+data/processed/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+logs/
+
+# Models (large binary files)
+models/
+*.pt
+*.pkl
+*.joblib
+
+# Reports / exports
+*.csv
+*.json
+ai_analysis/
+
+# Temp
+tmp/
+temp/
+.tmp/
