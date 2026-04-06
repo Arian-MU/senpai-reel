@@ -1,0 +1,185 @@
+import streamlit as st
+import duckdb
+import pandas as pd
+
+st.set_page_config(page_title="Corpus Explorer", page_icon="📝", layout="wide")
+st.title("📝 Corpus Explorer")
+st.caption("Search transcripts, view full text, track transcription cost")
+
+DB_PATH = "reels.duckdb"
+
+
+@st.cache_resource
+def get_conn():
+    return duckdb.connect(DB_PATH)
+
+
+conn = get_conn()
+
+
+def get_transcription_stats():
+    try:
+        total_audio = conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE local_audio_path IS NOT NULL AND local_audio_path != ''"
+        ).fetchone()[0]
+        transcribed = conn.execute("SELECT COUNT(*) FROM transcripts").fetchone()[0]
+        total_cost = conn.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM transcripts").fetchone()[0]
+        pending = max(total_audio - transcribed, 0)
+        return {
+            "transcribed": transcribed,
+            "pending": pending,
+            "total_audio": total_audio,
+            "total_cost_usd": round(total_cost, 4),
+        }
+    except Exception:
+        return {"transcribed": 0, "pending": 0, "total_audio": 0, "total_cost_usd": 0.0}
+
+
+stats = get_transcription_stats()
+
+# ── Stats bar ─────────────────────────────────────────────────────────────────
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Transcribed", stats["transcribed"])
+c2.metric("Pending", stats["pending"])
+c3.metric("Total Audio Files", stats["total_audio"])
+# Free Deepgram credit = $200; $0.0058/min
+remaining_free = max(200.0 - stats["total_cost_usd"], 0)
+c4.metric("Total Cost", f"${stats['total_cost_usd']:.4f}", delta=f"${remaining_free:.2f} free remains")
+
+st.markdown("---")
+
+# ── Transcription queue trigger ────────────────────────────────────────────────
+with st.expander("⚙️ Run Transcription Queue"):
+    prov = st.radio("Provider", ["deepgram", "whisper"], horizontal=True)
+    batch = st.number_input("Batch size", min_value=1, max_value=50, value=10)
+
+    api_key_field = "DEEPGRAM_API_KEY" if prov == "deepgram" else "OPENAI_API_KEY"
+    try:
+        api_key = st.secrets[api_key_field]
+        key_ok = bool(api_key)
+    except Exception:
+        api_key = ""
+        key_ok = False
+
+    if not key_ok:
+        st.warning(f"⚠️ `{api_key_field}` not found in `.streamlit/secrets.toml`")
+    else:
+        if st.button(f"▶️ Transcribe {batch} posts via {prov}", type="primary"):
+            from processing.transcription_queue import run_transcription_queue
+
+            prog = st.progress(0)
+            status_txt = st.empty()
+
+            def _cb(done, total, post_id, err):
+                prog.progress(done / total)
+                if err:
+                    status_txt.warning(f"⚠️ {post_id}: {err}")
+                else:
+                    status_txt.info(f"✅ {done}/{total}: `{post_id}`")
+
+            result = run_transcription_queue(api_key, prov, batch, _cb)
+            status_txt.empty()
+            prog.empty()
+            st.success(
+                f"Done — {result['done']} transcribed, {result['failed']} failed. "
+                f"Cost this batch: ${result['total_cost_usd']:.4f}"
+            )
+            if result["errors"]:
+                st.json(result["errors"])
+            st.rerun()
+
+st.markdown("---")
+
+# ── Single-post transcribe ─────────────────────────────────────────────────────
+with st.expander("🎙️ Transcribe a single post"):
+    pid = st.text_input("Post ID", placeholder="e.g., ABC123")
+    prov_single = st.radio("Provider", ["deepgram", "whisper"], key="single_prov", horizontal=True)
+    if st.button("▶️ Transcribe", key="btn_single_tx"):
+        key_field = "DEEPGRAM_API_KEY" if prov_single == "deepgram" else "OPENAI_API_KEY"
+        try:
+            key = st.secrets[key_field]
+        except Exception:
+            key = ""
+        if not key:
+            st.error(f"`{key_field}` not set in secrets.")
+        elif not pid.strip():
+            st.error("Enter a post ID.")
+        else:
+            from processing.transcribe import transcribe_post
+            with st.spinner("Transcribing…"):
+                try:
+                    res = transcribe_post(pid.strip(), key, prov_single)
+                    st.success(f"Done — {res.word_count} words, ${res.cost_usd:.4f}")
+                    st.write(res.transcript)
+                except Exception as e:
+                    st.error(str(e))
+
+st.markdown("---")
+
+# ── Transcript list ────────────────────────────────────────────────────────────
+search = st.text_input("🔍 Search transcripts", placeholder="e.g., ATS, resume, STAR method")
+
+try:
+    if search:
+        df = conn.execute(
+            """
+            SELECT t.post_id, p.account_id, t.transcript, t.confidence,
+                   t.duration_sec, t.word_count, t.cost_usd, t.transcribed_at
+            FROM transcripts t
+            LEFT JOIN posts p ON t.post_id = p.post_id
+            WHERE LOWER(t.transcript) LIKE ?
+            ORDER BY t.transcribed_at DESC
+            LIMIT 100
+            """,
+            [f"%{search.lower()}%"],
+        ).df()
+    else:
+        df = conn.execute(
+            """
+            SELECT t.post_id, p.account_id, t.transcript, t.confidence,
+                   t.duration_sec, t.word_count, t.cost_usd, t.transcribed_at
+            FROM transcripts t
+            LEFT JOIN posts p ON t.post_id = p.post_id
+            ORDER BY t.transcribed_at DESC
+            LIMIT 100
+            """,
+        ).df()
+except Exception:
+    df = pd.DataFrame()
+
+if df.empty:
+    st.info("No transcripts yet. Run a scrape, download videos, extract audio, then transcribe.")
+else:
+    st.caption(f"{len(df)} transcripts")
+    # Truncate for table display
+    df["transcript_preview"] = df["transcript"].str.slice(0, 200) + "…"
+    display_df = df.drop(columns=["transcript"])
+    st.dataframe(display_df, use_container_width=True, hide_index=True,
+                 column_config={
+                     "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
+                     "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.0f"),
+                     "cost_usd": st.column_config.NumberColumn("Cost $", format="%.4f"),
+                 })
+
+    # Full transcript viewer
+    st.markdown("---")
+    st.subheader("Full Transcript Viewer")
+    selected_post = st.selectbox("Select post", df["post_id"].tolist())
+    if selected_post:
+        row = df[df["post_id"] == selected_post].iloc[0]
+        st.write(f"**@{row.get('account_id', '?')}** — {row.get('duration_sec', 0):.0f}s — "
+                 f"confidence {row.get('confidence', 0):.2f} — ${row.get('cost_usd', 0):.4f}")
+        st.text_area("Full Transcript", value=row["transcript"], height=250, disabled=True)
+
+        # Word timestamps
+        try:
+            words_df = conn.execute(
+                "SELECT word_index, word, start_sec, end_sec, confidence "
+                "FROM transcript_words WHERE post_id = ? ORDER BY word_index",
+                [selected_post],
+            ).df()
+            if not words_df.empty:
+                with st.expander("📊 Word Timestamps"):
+                    st.dataframe(words_df, use_container_width=True, hide_index=True)
+        except Exception:
+            pass

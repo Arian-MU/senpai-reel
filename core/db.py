@@ -144,6 +144,35 @@ def init_db():
     )
     """)
 
+    # Phase 3 — Transcripts
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS transcripts (
+        post_id        TEXT PRIMARY KEY,
+        provider       TEXT,
+        model          TEXT,
+        transcript     TEXT,
+        language       TEXT,
+        confidence     DOUBLE,
+        duration_sec   DOUBLE,
+        word_count     INTEGER,
+        transcribed_at TIMESTAMP,
+        cost_usd       DOUBLE,
+        raw_response   JSON
+    )
+    """)
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS transcript_words (
+        post_id    TEXT,
+        word_index INTEGER,
+        word       TEXT,
+        start_sec  DOUBLE,
+        end_sec    DOUBLE,
+        confidence DOUBLE,
+        PRIMARY KEY (post_id, word_index)
+    )
+    """)
+
     # Migration: add Phase 2 columns if they don't exist yet
     for col, typedef in [
         ("downloaded_at", "TIMESTAMP"),
