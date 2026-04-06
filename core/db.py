@@ -83,14 +83,26 @@ def init_db():
 
 
 # --------------------------------------------------------
-#  RAW SCRAPE SAVER (NEW)
+#  RAW SCRAPE SAVER
 # --------------------------------------------------------
 def save_raw_scrape(profile, items):
-    """Stores the raw JSON array exactly as returned."""
+    """Stores the raw JSON array exactly as returned. Skips duplicates by shortCode."""
     conn = duckdb.connect(DB_PATH)
-    
-    saved_ids = []
+
+    saved, skipped = 0, 0
     for idx, item in enumerate(items):
+        shortcode = item.get("shortCode")
+
+        # Dedup: skip if this shortcode already exists in raw_scrapes
+        if shortcode:
+            existing = conn.execute(
+                "SELECT COUNT(*) FROM raw_scrapes WHERE json_extract_string(raw, '$.shortCode') = ?",
+                (shortcode,)
+            ).fetchone()[0]
+            if existing > 0:
+                skipped += 1
+                continue
+
         conn.execute("""
             INSERT INTO raw_scrapes VALUES (?, ?, ?, ?)
         """, (
@@ -99,10 +111,10 @@ def save_raw_scrape(profile, items):
             json.dumps(item),
             datetime.utcnow()
         ))
-        saved_ids.append(idx)
+        saved += 1
 
     conn.close()
-    return f"{len(saved_ids)} items saved"
+    return f"{saved} new, {skipped} already existed"
 
 
 # --------------------------------------------------------
