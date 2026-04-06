@@ -1,6 +1,9 @@
 import duckdb
 import json
+import uuid
+import re
 from datetime import datetime
+from typing import List, Optional
 
 DB_PATH = "reels.duckdb"
 
@@ -76,6 +79,66 @@ def init_db():
         full_name TEXT,
         user_id TEXT,
         profile_pic_url TEXT
+    )
+    """)
+
+    # ---- Phase 1: Canonical tables ----
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS creator_accounts (
+        account_id      TEXT PRIMARY KEY,
+        username        TEXT UNIQUE NOT NULL,
+        full_name       TEXT,
+        bio             TEXT,
+        followers       INTEGER,
+        following       INTEGER,
+        post_count      INTEGER,
+        is_verified     BOOLEAN DEFAULT FALSE,
+        profile_pic_url TEXT,
+        external_url    TEXT,
+        category        TEXT,
+        first_seen_at   TIMESTAMP,
+        last_scraped_at TIMESTAMP
+    )
+    """)
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS posts (
+        post_id          TEXT PRIMARY KEY,
+        account_id       TEXT,
+        caption          TEXT,
+        caption_clean    TEXT,
+        hashtags         TEXT[],
+        mentions         TEXT[],
+        likes            INTEGER DEFAULT 0,
+        views            INTEGER DEFAULT 0,
+        comments_count   INTEGER DEFAULT 0,
+        duration_sec     DOUBLE DEFAULT 0,
+        posted_at        TIMESTAMP,
+        scraped_at       TIMESTAMP,
+        video_url        TEXT,
+        audio_url        TEXT,
+        thumbnail_url    TEXT,
+        is_pinned        BOOLEAN DEFAULT FALSE,
+        is_sponsored     BOOLEAN DEFAULT FALSE,
+        engagement_rate  DOUBLE DEFAULT 0,
+        local_video_path TEXT,
+        local_audio_path TEXT,
+        download_status  TEXT DEFAULT 'pending',
+        raw_json         JSON
+    )
+    """)
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS scrape_jobs (
+        job_id       TEXT PRIMARY KEY,
+        username     TEXT,
+        started_at   TIMESTAMP,
+        finished_at  TIMESTAMP,
+        reels_found  INTEGER DEFAULT 0,
+        reels_new    INTEGER DEFAULT 0,
+        status       TEXT DEFAULT 'running',
+        error_msg    TEXT
     )
     """)
 
@@ -211,3 +274,194 @@ def _insert_comments_recursive(conn, reel_id, comments, parent_id=None):
 
         if isinstance(c.get("replies"), list):
             _insert_comments_recursive(conn, reel_id, c["replies"], c.get("id"))
+
+
+# --------------------------------------------------------
+#  PHASE 1: CANONICAL SAVERS
+# --------------------------------------------------------
+
+def _extract_hashtags(caption: Optional[str]) -> List[str]:
+    if not caption:
+        return []
+    return re.findall(r"#(\w+)", caption)
+
+
+def _extract_mentions(caption: Optional[str]) -> List[str]:
+    if not caption:
+        return []
+    return re.findall(r"@(\w+)", caption)
+
+
+def _clean_caption(caption: Optional[str]) -> Optional[str]:
+    if not caption:
+        return None
+    cleaned = re.sub(r"#\w+", "", caption)
+    cleaned = re.sub(r"@\w+", "", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def upsert_creator_account(username: str, item: dict) -> str:
+    """Insert or update a creator account from a scraped Apify item.
+    Returns the account_id (Instagram user ID)."""
+    conn = duckdb.connect(DB_PATH)
+    account_id = str(item.get("ownerId") or item.get("owner", {}).get("id") or username)
+    now = datetime.utcnow()
+
+    existing = conn.execute(
+        "SELECT account_id FROM creator_accounts WHERE username = ?", (username,)
+    ).fetchone()
+
+    if existing:
+        conn.execute("""
+            UPDATE creator_accounts
+            SET last_scraped_at = ?, followers = COALESCE(?, followers)
+            WHERE username = ?
+        """, (now, item.get("followersCount"), username))
+    else:
+        conn.execute("""
+            INSERT INTO creator_accounts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            account_id,
+            username,
+            item.get("ownerFullName"),
+            item.get("biography"),
+            item.get("followersCount"),
+            item.get("followsCount"),
+            item.get("postsCount"),
+            bool(item.get("verified")),
+            item.get("profilePicUrl"),
+            item.get("externalUrl"),
+            "Jobs/Recruitment",
+            now,
+            now,
+        ))
+
+    conn.close()
+    return account_id
+
+
+def upsert_post(account_id: str, item: dict) -> bool:
+    """Insert or update a post from a scraped Apify item.
+    Returns True if this was a new post, False if updated."""
+    conn = duckdb.connect(DB_PATH)
+    post_id = item.get("shortCode") or item.get("id")
+    if not post_id:
+        conn.close()
+        return False
+
+    caption = item.get("caption")
+    hashtags = _extract_hashtags(caption)
+    mentions = _extract_mentions(caption)
+    caption_clean = _clean_caption(caption)
+    likes = item.get("likesCount") or 0
+    views = item.get("videoViewCount") or 0
+    engagement_rate = round((likes / views * 100), 4) if views > 0 else 0.0
+    now = datetime.utcnow()
+
+    thumbnail = None
+    images = item.get("images")
+    if images and isinstance(images, list) and len(images) > 0:
+        thumbnail = images[0]
+
+    existing = conn.execute(
+        "SELECT post_id FROM posts WHERE post_id = ?", (post_id,)
+    ).fetchone()
+
+    is_new = existing is None
+
+    if existing:
+        # Update engagement stats only (keep download status etc)
+        conn.execute("""
+            UPDATE posts
+            SET likes = ?, views = ?, comments_count = ?, engagement_rate = ?,
+                scraped_at = ?, video_url = ?, audio_url = ?
+            WHERE post_id = ?
+        """, (likes, views, item.get("commentsCount") or 0, engagement_rate,
+              now, item.get("videoUrl"), item.get("audioUrl"), post_id))
+    else:
+        conn.execute("""
+            INSERT INTO posts VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+        """, (
+            post_id,
+            account_id,
+            caption,
+            caption_clean,
+            hashtags,
+            mentions,
+            likes,
+            views,
+            item.get("commentsCount") or 0,
+            item.get("videoDuration") or 0.0,
+            fix_timestamp(item.get("timestamp")),
+            now,
+            item.get("videoUrl"),
+            item.get("audioUrl"),
+            thumbnail,
+            bool(item.get("isPinned")),
+            bool(item.get("isSponsored")),
+            engagement_rate,
+            None,    # local_video_path
+            None,    # local_audio_path
+            "pending",
+            json.dumps(item),
+        ))
+
+    conn.close()
+    return is_new
+
+
+def start_scrape_job(username: str) -> str:
+    """Create a scrape_jobs row and return the job_id."""
+    conn = duckdb.connect(DB_PATH)
+    job_id = str(uuid.uuid4())
+    conn.execute("""
+        INSERT INTO scrape_jobs VALUES (?, ?, ?, NULL, 0, 0, 'running', NULL)
+    """, (job_id, username, datetime.utcnow()))
+    conn.close()
+    return job_id
+
+
+def finish_scrape_job(job_id: str, reels_found: int, reels_new: int,
+                      status: str = "done", error_msg: Optional[str] = None):
+    """Mark a scrape job as finished."""
+    conn = duckdb.connect(DB_PATH)
+    conn.execute("""
+        UPDATE scrape_jobs
+        SET finished_at = ?, reels_found = ?, reels_new = ?, status = ?, error_msg = ?
+        WHERE job_id = ?
+    """, (datetime.utcnow(), reels_found, reels_new, status, error_msg, job_id))
+    conn.close()
+
+
+def get_scrape_history() -> list:
+    """Return recent scrape jobs ordered by newest first."""
+    conn = duckdb.connect(DB_PATH)
+    rows = conn.execute("""
+        SELECT job_id, username, started_at, finished_at,
+               reels_found, reels_new, status, error_msg
+        FROM scrape_jobs ORDER BY started_at DESC LIMIT 50
+    """).fetchall()
+    conn.close()
+    return rows
+
+
+def get_posts_stats() -> dict:
+    """Return aggregate stats for the posts table."""
+    conn = duckdb.connect(DB_PATH)
+    row = conn.execute("""
+        SELECT COUNT(*) as total,
+               COUNT(DISTINCT account_id) as accounts,
+               AVG(engagement_rate) as avg_engagement,
+               SUM(CASE WHEN download_status = 'done' THEN 1 ELSE 0 END) as downloaded
+        FROM posts
+    """).fetchone()
+    conn.close()
+    return {
+        "total_posts": row[0] or 0,
+        "accounts": row[1] or 0,
+        "avg_engagement": round(row[2] or 0, 2),
+        "downloaded": row[3] or 0,
+    }
+
