@@ -20,7 +20,7 @@
 
 | Phase | Status | Branch |
 |-------|--------|--------|
-| Phase 0 — Foundation | `[ ] Not Started` | `phase-0-foundation` |
+| Phase 0 — Foundation | `[x] Done` | `phase-0-foundation` |
 | Phase 1 — Scraping Engine | `[ ] Not Started` | `phase-1-scraping` |
 | Phase 2 — Media Acquisition | `[ ] Not Started` | `phase-2-media` |
 | Phase 3 — Transcription | `[ ] Not Started` | `phase-3-transcription` |
