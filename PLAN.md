@@ -29,7 +29,7 @@
 | Phase 6 — Analytics | `[x] Done` | `phase-6-analytics` |
 | Phase 7 — Content Studio | `[x] Done` | `phase-7-content` |
 | Phase 8 — QA & Testing | `[x] Done` | `phase-8-qa` |
-| Phase 9 — Optimisation | `[ ] Not Started` | `phase-9-optimisation` |
+| Phase 9 — Optimisation | `[x] Done` | `phase-9-optimisation` |
 
 ---
 
