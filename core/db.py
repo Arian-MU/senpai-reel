@@ -230,6 +230,20 @@ def init_db():
         except Exception:
             pass  # column already exists
 
+    # Phase 9 — Indexes for query performance
+    for ddl in [
+        "CREATE INDEX IF NOT EXISTS idx_posts_account_id    ON posts(account_id)",
+        "CREATE INDEX IF NOT EXISTS idx_posts_posted_at     ON posts(posted_at)",
+        "CREATE INDEX IF NOT EXISTS idx_posts_download_status ON posts(download_status)",
+        "CREATE INDEX IF NOT EXISTS idx_message_units_topic ON message_units(topic)",
+        "CREATE INDEX IF NOT EXISTS idx_message_units_post_id ON message_units(post_id)",
+        "CREATE INDEX IF NOT EXISTS idx_transcripts_post_id ON transcripts(post_id)",
+    ]:
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass   # index may already exist
+
     conn.close()
 
 
