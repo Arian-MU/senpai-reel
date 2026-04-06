@@ -178,14 +178,14 @@ if "caption" in df.columns:
     df = df.copy()
     df["caption"] = df["caption"].str.slice(0, 100)
 
-st.dataframe(df, use_container_width=True, hide_index=True, column_config=col_cfg)
+st.dataframe(df, width="stretch", hide_index=True, column_config=col_cfg)
 
 # ── Pagination controls ────────────────────────────────────────────────────────
 st.markdown("---")
 pg_left, pg_mid, pg_right = st.columns([1, 2, 1])
 
 with pg_left:
-    if st.button("◀ Previous", disabled=(current_page == 0), use_container_width=True):
+    if st.button("◀ Previous", disabled=(current_page == 0), width="stretch"):
         st.session_state.data_page -= 1
         st.rerun()
 
@@ -196,7 +196,7 @@ with pg_mid:
     )
 
 with pg_right:
-    if st.button("Next ▶", disabled=(current_page >= total_pages - 1), use_container_width=True):
+    if st.button("Next ▶", disabled=(current_page >= total_pages - 1), width="stretch"):
         st.session_state.data_page += 1
         st.rerun()
 
@@ -210,7 +210,7 @@ with dl1:
         data=df.to_csv(index=False),
         file_name=f"reels_{selected_account}_p{current_page + 1}_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
 with dl2:
     st.download_button(
@@ -218,6 +218,6 @@ with dl2:
         data=df.to_json(orient="records", indent=2),
         file_name=f"reels_{selected_account}_p{current_page + 1}_{datetime.now().strftime('%Y%m%d')}.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",
     )
 

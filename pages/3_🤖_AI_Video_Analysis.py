@@ -167,7 +167,7 @@ with col1:
         names=category_data.index,
         title="Distribution of Content Types"
     )
-    st.plotly_chart(fig_cat, use_container_width=True)
+    st.plotly_chart(fig_cat, width="stretch")
 
 with col2:
     st.subheader("🎯 Engagement vs Virality")
@@ -182,7 +182,7 @@ with col2:
     )
     fig_scatter.update_xaxis(title="Engagement Rate (%)")
     fig_scatter.update_yaxis(title="Virality Potential (0-10)")
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.plotly_chart(fig_scatter, width="stretch")
 
 # Performance analysis
 st.subheader("🏆 Performance Analysis")
@@ -227,7 +227,7 @@ display_columns = ['short_code', 'owner', 'category', 'engagement_rate', 'virali
 
 st.dataframe(
     filtered_df[display_columns].round(2),
-    use_container_width=True,
+    width="stretch",
     column_config={
         "short_code": "Short Code",
         "owner": "Owner",

@@ -141,7 +141,7 @@ with history_tab:
     else:
         total_cost = df["cost_usd"].sum() if "cost_usd" in df else 0
         st.caption(f"{len(df)} items generated — total cost: ${total_cost:.4f}")
-        st.dataframe(df, use_container_width=True, hide_index=True,
+        st.dataframe(df, width="stretch", hide_index=True,
                      column_config={
                          "cost_usd": st.column_config.NumberColumn("Cost $", format="%.4f"),
                          "preview": st.column_config.TextColumn("Preview", width="large"),

@@ -154,7 +154,7 @@ else:
     # Truncate for table display
     df["transcript_preview"] = df["transcript"].str.slice(0, 200) + "…"
     display_df = df.drop(columns=["transcript"])
-    st.dataframe(display_df, use_container_width=True, hide_index=True,
+    st.dataframe(display_df, width="stretch", hide_index=True,
                  column_config={
                      "confidence": st.column_config.NumberColumn("Confidence", format="%.2f"),
                      "duration_sec": st.column_config.NumberColumn("Duration (s)", format="%.0f"),
@@ -180,6 +180,6 @@ else:
             ).df()
             if not words_df.empty:
                 with st.expander("📊 Word Timestamps"):
-                    st.dataframe(words_df, use_container_width=True, hide_index=True)
+                    st.dataframe(words_df, width="stretch", hide_index=True)
         except Exception:
             pass

@@ -96,7 +96,7 @@ with tab1:
                            hover_data=['views', 'comments_count'])
                 fig.update_xaxis(title="Reel Shortcode")
                 fig.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             with chart_col2:
                 st.subheader("Likes vs Views Correlation")
@@ -105,7 +105,7 @@ with tab1:
                                title="Engagement Correlation")
                 fig.update_xaxis(title="Views")
                 fig.update_yaxis(title="Likes")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             # Duration analysis
             if 'duration' in performance_data.columns:
@@ -117,7 +117,7 @@ with tab1:
                     fig = px.histogram(performance_data, x='duration', nbins=20,
                                      title="Video Duration Distribution")
                     fig.update_xaxis(title="Duration (seconds)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
                 
                 with duration_col2:
                     # Duration vs engagement
@@ -127,7 +127,7 @@ with tab1:
                                    trendline="ols")
                     fig.update_xaxis(title="Duration (seconds)")
                     fig.update_yaxis(title="Engagement Rate (%)")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
         else:
             st.info("No performance data available for analysis.")
             
@@ -173,7 +173,7 @@ with tab2:
                             title="Average Engagement by Hour of Day")
                 fig.update_xaxis(title="Hour (24h format)")
                 fig.update_yaxis(title="Average Count")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             with timing_col2:
                 st.subheader("Best Posting Days")
@@ -191,7 +191,7 @@ with tab2:
                            title="Average Engagement by Day of Week")
                 fig.update_xaxis(title="Day of Week")
                 fig.update_yaxis(title="Average Count")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             # Best performing time slots
             st.subheader("🎯 Optimal Posting Recommendations")
@@ -246,7 +246,7 @@ with tab3:
                            orientation='h', title="Most Active Commenters")
                 fig.update_xaxis(title="Number of Comments")
                 fig.update_yaxis(title="Username")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             with engagement_col2:
                 st.subheader("💭 Comment Sentiment Overview")
@@ -301,7 +301,7 @@ with tab4:
                            orientation='h', title="Most Frequently Tagged Users")
                 fig.update_xaxis(title="Times Tagged")
                 fig.update_yaxis(title="Username")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
             
             with tag_col2:
                 st.subheader("📈 Tagging Impact on Performance")
@@ -318,7 +318,7 @@ with tab4:
                                    trendline="ols")
                     fig.update_xaxis(title="Number of Tagged Users")
                     fig.update_yaxis(title="Likes")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
             
             # Tagging network insights
             st.subheader("🌐 Tagging Network Insights")

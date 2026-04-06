@@ -45,8 +45,8 @@ with tab1:
                 labels={"avg_engagement": "Avg Engagement %", "username": "Creator"},
                 color_continuous_scale="Blues",
             )
-            st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(df_lb, use_container_width=True, hide_index=True,
+            st.plotly_chart(fig, width="stretch")
+        st.dataframe(df_lb, width="stretch", hide_index=True,
                      column_config={
                          "avg_engagement": st.column_config.NumberColumn("Avg Eng %", format="%.2f"),
                          "max_engagement": st.column_config.NumberColumn("Max Eng %", format="%.2f"),
@@ -65,15 +65,15 @@ with tab2:
             with col_pie:
                 fig_pie = px.pie(df_topics, names="topic", values="unit_count",
                                   title="Topics by Unit Count", hole=0.3)
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width="stretch")
             with col_bar:
                 fig_bar = px.bar(df_topics, x="topic", y="unit_count",
                                   title="Units per Topic",
                                   labels={"unit_count": "# Units", "topic": "Topic"},
                                   color="unit_count", color_continuous_scale="Teal")
-                st.plotly_chart(fig_bar, use_container_width=True)
+                st.plotly_chart(fig_bar, width="stretch")
         else:
-            st.dataframe(df_topics, use_container_width=True, hide_index=True)
+            st.dataframe(df_topics, width="stretch", hide_index=True)
 
 # ── Tab 3: Content Gap Map ─────────────────────────────────────────────────────
 with tab3:
@@ -92,9 +92,9 @@ with tab3:
                 aspect="auto",
             )
             fig_heat.update_layout(height=500)
-            st.plotly_chart(fig_heat, use_container_width=True)
+            st.plotly_chart(fig_heat, width="stretch")
         else:
-            st.dataframe(pivot, use_container_width=True)
+            st.dataframe(pivot, width="stretch")
 
 # ── Tab 4: Top Reels ───────────────────────────────────────────────────────────
 with tab4:
@@ -106,7 +106,7 @@ with tab4:
     else:
         st.dataframe(
             df_top,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "video_url": st.column_config.LinkColumn("Watch", display_text="🎥"),
@@ -130,5 +130,5 @@ with tab5:
                 color="count", color_continuous_scale="Purples",
             )
             fig_ht.update_xaxes(tickangle=45)
-            st.plotly_chart(fig_ht, use_container_width=True)
-        st.dataframe(df_ht, use_container_width=True, hide_index=True)
+            st.plotly_chart(fig_ht, width="stretch")
+        st.dataframe(df_ht, width="stretch", hide_index=True)
