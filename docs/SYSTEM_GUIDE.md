@@ -1,0 +1,365 @@
+# Senpai Reel — System Guide
+*Last updated: 6 April 2026*
+
+---
+
+## What this app does (in one sentence)
+
+Senpai Reel scrapes up to 23 competitor Instagram accounts in the **Jobs-in-Australia niche**, analyses what they say in their reels, and generates content ideas grounded in that competitive intelligence.
+
+---
+
+## The full pipeline (what happens under the hood)
+
+There are **5 sequential stages**. Data flows forward — you must complete each stage before the next one has anything to work with.
+
+```
+Instagram Accounts
+      │
+      ▼
+[Stage 1] SCRAPE          Apify API → raw JSON + structured DB rows
+      │
+      ▼
+[Stage 2] DOWNLOAD        Direct HTTP (or yt-dlp fallback) → .mp4 files on disk
+      │
+      ▼
+[Stage 2b] EXTRACT AUDIO  ffmpeg → 16kHz mono .wav files on disk
+      │
+      ▼
+[Stage 3] TRANSCRIBE      Deepgram Nova-2 → full text + word timestamps in DB
+      │
+      ▼
+[Stage 4] EXTRACT         GPT-4o-mini → "message units" (structured knowledge) in DB
+      │
+      ▼
+[Stage 4b] EMBED          OpenAI text-embedding-3-small → 1536-dim vectors in DB
+      │
+      ▼
+[Stage 5] USE             Search · Analytics · Content Studio
+```
+
+---
+
+## Stage-by-stage technical breakdown
+
+### Stage 1 — Scraping (`collection/scraper.py`)
+
+**What it does:**
+Calls the Apify actor `apify~instagram-reel-scraper` for one or more Instagram usernames. 
+The actor returns a JSON array of reel objects. Each object has: 
+`shortCode`, `caption`, `likesCount`, `videoViewCount`, `commentsCount`, `videoUrl`, 
+`audioUrl`, `timestamp`, `videoDuration`, `ownerUsername`, `ownerId`, `images[]`, etc.
+
+**What gets saved to DB:**
+1. Raw JSON blob per reel → `raw_scrapes` table (for debugging / auditing)
+2. Creator profile → `creator_accounts` table (upserted by username)
+3. Individual reel → `posts` table (upserted by `shortCode`)
+4. Legacy copies → `reels`, `comments`, `tagged_users` tables (kept for backward compat)
+5. Job audit record → `scrape_jobs` table (with status, counts, timestamps)
+
+**Deduplication:**  
+The `shortCode` field is used as the primary key for posts. If a reel already exists, only engagement stats (likes, views) are updated — download status, audio path, transcript, etc. are never overwritten.
+
+**Retry logic:**  
+On HTTP errors the scraper tries up to 3 times with exponential backoff (1s, 2s). Auth errors (401/403) abort immediately — no point retrying.
+
+**Accounts tracked (`collection/account_list.py`):**  
+23 curated Jobs-AU competitor accounts across 5 categories:
+- Resume & Career Coaches: `resumeworded`, `careersidekick`, `the.career.strategist`, `iamhannah.co`, `careerwithsam`, `jobsearchcoach`, `theresumewriter`, `careercoachmelbourne`
+- Recruitment & HR: `hays.australia`, `robertwaltersau`, `michaelpageaustralia`, `reedrecruitment`, `seek.com.au`, `hrmonline`
+- ATS & Resume Tips: `tealau`, `kickresume`, `resumetricks`
+- Interview Prep: `interviewguru`, `theinterviewcoach`
+- LinkedIn & Job Search: and ~4 more
+
+**Performance:**  
+Each account scrape takes 10–60 seconds (Apify cloud actor spins up). A full 23-account batch = ~15–30 minutes.
+
+---
+
+### Stage 2 — Video download (`processing/download.py`)
+
+**What it does:**  
+For every post with `download_status = 'pending'`, downloads the `video_url` CDN link to `downloads/{post_id}.mp4`.
+
+**Two-method approach (with automatic fallback):**
+1. **Direct HTTP** (`requests` streaming, 1 MB chunks) — fast, works ~70% of the time when the Apify CDN URL is still valid
+2. **yt-dlp** — used if the direct download gets a non-video content type or fails; slower but more reliable
+
+**Success criteria:** File must be > 10 KB. Anything smaller is treated as a failed partial download.
+
+**DB writes on each attempt:**
+- `download_status` set to `'downloading'` at start, then `'done'` or `'failed'`
+- `local_video_path`, `file_size_mb`, `downloaded_at` written on success
+
+**Important timing issue:**  
+Apify CDN URLs expire after ~24–48 hours. If you scrape but don't download within that window, the direct HTTP method will fail. yt-dlp may still work by fetching a fresh URL, but is slower and less reliable.
+
+**Audio extraction (`processing/audio.py`):**  
+Runs as a sub-step after download. Calls `ffmpeg` to convert `.mp4` → 16kHz mono `.wav` in `audio_extracts/`. This specific format is required by Deepgram. 
+**ffmpeg must be installed:** `brew install ffmpeg` (path: `/opt/homebrew/bin/ffmpeg`)
+
+---
+
+### Stage 3 — Transcription (`processing/transcribe.py`, `processing/transcription_queue.py`)
+
+**What it does:**  
+For every post with a `.wav` audio file but no transcript yet, sends the audio to the Deepgram API and saves the result.
+
+**Primary provider: Deepgram Nova-2**
+- `en-AU` language model (Australian English)
+- Returns full transcript text + word-level timestamps (start/end seconds + confidence per word)
+- Cost: **$0.0058 per minute** of audio
+- You have $200 free credits ≈ 34,000 minutes of audio
+
+**Fallback provider: OpenAI Whisper-1**
+- Slower and more expensive than Nova-2 for this use case
+- Only used if you pass `provider='whisper'` explicitly
+
+**What gets saved:**
+- `transcripts` table: full text, language, confidence score, duration, word count, cost, raw API response JSON
+- `transcript_words` table: every word with its start/end timestamp and confidence (enables future karaoke-style UI or search within timestamps)
+
+**The queue:**  
+`run_transcription_queue()` finds up to N posts with audio but no transcript, processes them one by one, and persists after each one. If it crashes partway through, already-transcribed posts are never re-processed.
+
+---
+
+### Stage 4 — Knowledge extraction (`analysis/extraction.py`, `processing/extraction_queue.py`)
+
+**What it does:**  
+For every transcript that hasn't been processed, sends the transcript text to GPT-4o-mini with a structured prompt and extracts 1–8 "message units" per transcript.
+
+**What is a message unit?**  
+A message unit is one concrete, self-contained idea from a reel. Examples:
+- *"91% of recruiters use ATS to filter resumes before a human reads them"* (type: stat, topic: ATS)
+- *"Don't put your photo on an Australian resume"* (type: warning, topic: Resume)
+- *"Use the STAR method for every behavioural interview question"* (type: tip, topic: Interview)
+
+**The taxonomy (`analysis/taxonomy.py`):**
+
+Topics (11):
+`ATS` · `Resume` · `CoverLetter` · `Interview` · `LinkedIn` · `JobSearch` · `Salary` · `CareerChange` · `Recruiter` · `Visa` · `General`
+
+Content types (8):
+`tip` · `warning` · `stat` · `myth` · `story` · `hook` · `cta` · `other`
+
+**GPT output per unit:**
+- `text` — verbatim or close paraphrase (≤200 chars)
+- `claim` — core assertion in one sentence (GPT's words)
+- `advice` — actionable instruction, or null
+- `topic` — one of the 11 topics above
+- `subtopic` — freeform refinement (e.g. "salary_negotiation")
+- `content_type` — one of the 8 types above
+- `confidence` — 0.0–1.0 (GPT's certainty in the extraction)
+
+**Cost:** GPT-4o-mini = $0.15/1M input + $0.60/1M output tokens. A typical 60-second reel transcript (~200 words) costs ~$0.0003. Processing 1,000 reels ≈ $0.30 total.
+
+**DB write:**  
+Each unit is written to `message_units` with its own UUID. The extraction cost is also written back to the `transcripts.extraction_cost_usd` column.
+
+---
+
+### Stage 4b — Embedding (`analysis/embeddings.py`)
+
+**What it does:**  
+For every message unit without an embedding, calls OpenAI `text-embedding-3-small` to generate a 1536-dimensional float vector and stores it in `message_units.embedding` as `FLOAT[1536]`.
+
+**Why:** DuckDB can compute cosine similarity between two vectors natively (`list_cosine_similarity()`), enabling semantic search without an external vector database.
+
+**Cost:** $0.02/1M tokens — essentially free. 10,000 units ≈ $0.002.
+
+**Batch size:** 50 texts per API call to stay well within rate limits.
+
+---
+
+### Stage 5 — Usage (what the 5 visible pages do)
+
+#### Home / Scraper (`app.py`)
+
+The operational control centre. Three tabs:
+
+| Tab | What it does |
+|-----|-------------|
+| **Single Account** | Scrape one Instagram handle on demand (10–60 sec) |
+| **Batch Scrape** | Edit the 23-account list and scrape all at once |
+| **📥 Download Queue** | Download pending videos + shows pending/done/failed counts |
+
+Also shows a scrape history expander (last 20 jobs with status, timestamps, counts).
+
+The `APIFY_TOKEN` is loaded from `.streamlit/secrets.toml` — **if this is missing, the entire home page breaks**.
+
+---
+
+#### Page 1 — Data Viewer (`pages/1_📊_Data_Viewer.py`)
+
+Paginated table (50 rows/page) of all posts in the DB. 
+
+Sidebar filters: account, sort column (engagement/views/likes/date).  
+Top bar: total reels, avg likes, avg views, avg engagement, avg duration.  
+Columns shown: username, caption (truncated to 100 chars), likes, views, engagement %, posted date, duration, download status.  
+Export: CSV download button, JSON download button.  
+Pagination: Previous / Next buttons with "Showing rows X–Y of Z" counter.
+
+Falls back to `raw_scrapes` table if `posts` is empty (useful in early stages).
+
+---
+
+#### Page 3 — Corpus Explorer (`pages/3_📝_Corpus_Explorer.py`)
+
+Browse and search transcripts.
+
+Top stats: how many posts are transcribed / pending / cost so far.  
+**Trigger transcription queue** — hidden in an expandable section ("⚙️ Run Transcription Queue"). Requires `DEEPGRAM_API_KEY` in secrets.  
+Search bar: filter transcripts by keyword.  
+Result list: clicking a row shows the full transcript text + word timestamps.
+
+---
+
+#### Page 4 — Search (`pages/4_🔍_Search.py`)
+
+Semantic and keyword search over all extracted message units.
+
+Top stats: total units extracted, how many are embedded.  
+Search mode auto-selects:
+- If `OPENAI_API_KEY` is set **and** units are embedded → semantic search (cosine similarity)
+- Otherwise → keyword search (SQL `LIKE`)
+
+Filters: topic (dropdown), content type (dropdown), result count.  
+Results shown as cards: score, topic badge, content type badge, text, claim, creator username, link to source video.
+
+**Also hides pipeline controls here:**  
+- "Run Extraction Queue" expander (requires `OPENAI_API_KEY`)  
+- "Run Embedding Pipeline" trigger in sidebar
+
+---
+
+#### Page 5 — Analytics (`pages/5_📊_Analytics.py`)
+
+5-tab competitor intelligence dashboard (requires data in `message_units`):
+
+| Tab | Shows |
+|-----|-------|
+| 🏆 Leaderboard | Bar chart: creator accounts ranked by post count + total engagement |
+| 🏷️ Topic Distribution | Pie + bar chart: which topics are covered most across all reels |
+| 🗺️ Content Gap Map | Heatmap pivot: creator × topic, showing who covers what (and what nobody covers) |
+| 🔥 Top Reels | Table of highest-engagement posts, filterable by topic, with video URL links |
+| #️⃣ Hashtags | Bar chart of most-used hashtags across all posts |
+
+Requires `plotly` for charts — degrades gracefully to text tables if unavailable.
+
+---
+
+#### Page 6 — Content Studio (`pages/6_✍️_Content_Studio.py`)
+
+AI-powered content generation. **Requires `OPENAI_API_KEY`.**  
+
+Controls: Topic (dropdown), Tone (professional/friendly/bold/educational), Angle (free text).  
+Reference units: search for relevant competitor insights to ground the generation (optional but strongly recommended — improves output quality).  
+
+4 tabs:
+| Tab | Generates | Model | Cost estimate |
+|-----|-----------|-------|---------------|
+| Caption | Full Instagram caption with hashtags | gpt-4o-mini | ~$0.001 |
+| Hooks | 5 opening hooks for a reel | gpt-4o-mini | ~$0.001 |
+| Script | Full 60-second reel script | gpt-4o-mini | ~$0.002 |
+| History | All previously generated content with costs | — | — |
+
+All outputs are saved to the `generated_content` table automatically.
+
+---
+
+## Database schema (14 tables)
+
+| Table | Stage | What it holds |
+|-------|-------|---------------|
+| `raw_scrapes` | 1 | Raw JSON blobs as returned by Apify |
+| `profiles` | 1 | Legacy: one row per scrape run summary |
+| `creator_accounts` | 1 | One row per Instagram account (bio, followers, etc.) |
+| `posts` | 1–2 | One row per reel (canonical, includes download + audio paths) |
+| `scrape_jobs` | 1 | Audit log of every scrape run (status, counts, errors) |
+| `reels` | 1 | Legacy structured reels (kept for old pages compatibility) |
+| `comments` | 1 | Reel comments (recursive, supports replies) |
+| `tagged_users` | 1 | Users tagged in reels |
+| `reel_features` | — | Legacy, unused by current pipeline |
+| `video_analysis` | — | Legacy, from old AI analysis pages |
+| `transcripts` | 3 | One row per transcribed post (text, confidence, cost) |
+| `transcript_words` | 3 | One row per word with start/end timestamps |
+| `message_units` | 4 | One row per extracted knowledge unit (text, topic, type, embedding) |
+| `generated_content` | 5 | All AI-generated captions/hooks/scripts with cost tracking |
+
+**Storage location:** `reels.duckdb` (single file in project root, no server needed)  
+**WAL file:** `reels.duckdb.wal` — this grows over time. DuckDB checkpoints it automatically, but if it gets large (>100 MB), run `CHECKPOINT;` from a DuckDB shell.
+
+---
+
+## Required credentials (`.streamlit/secrets.toml`)
+
+```toml
+APIFY_TOKEN = "apify_api_..."          # Required for Stage 1 scraping
+DEEPGRAM_API_KEY = "..."               # Required for Stage 3 transcription
+OPENAI_API_KEY = "sk-..."             # Required for Stages 4, 4b, and Content Studio
+```
+
+If any key is missing:
+- No `APIFY_TOKEN` → Home page shows an error, nothing can be scraped
+- No `DEEPGRAM_API_KEY` → Corpus Explorer transcription queue silently does nothing
+- No `OPENAI_API_KEY` → Search falls back to keyword mode, Content Studio page shows an error and stops
+
+---
+
+## Current user journey (honest assessment)
+
+### What a user actually has to do today:
+
+```
+1. Open app → Home (Scraper)
+2. Type an account name or click "Batch Scrape" → wait 10–60 sec per account
+3. Go to Home → "📥 Download Queue" tab → click "Start Download Batch" → wait
+4. Go to Corpus Explorer → expand "⚙️ Run Transcription Queue" → enter Deepgram key → click run → wait
+5. Go to Search → expand "Run Extraction Queue" → click run → wait (GPT processes each transcript)
+6. Go to Search → sidebar → click "Embed pending units" → wait
+7. NOW the app is useful:
+   - Search page: semantic search over competitor knowledge
+   - Analytics page: competitor dashboards
+   - Content Studio: generate captions/hooks/scripts
+```
+
+### What makes this hard for new users:
+
+1. **No guided onboarding** — first-time users see empty tables and have no instructions
+2. **Pipeline controls are scattered** — steps 3, 4, 5, 6 are hidden in expanders on different pages
+3. **No pipeline status on the home page** — you can't see at a glance "you've done steps 1–2, still need to do steps 3–4"
+4. **No "run full pipeline" button** — each stage must be triggered manually on a different page
+5. **Error messages require technical knowledge** — a missing API key shows a Python exception, not plain English guidance
+
+---
+
+## Known issues & things to watch for
+
+| Issue | Severity | Notes |
+|-------|----------|-------|
+| Apify CDN URLs expire in ~24–48h | Medium | Download videos promptly after scraping |
+| DuckDB lock conflict | Medium | Only one process can write at a time. If Streamlit is running, you can't run CLI scripts simultaneously without closing the app first |
+| `use_container_width` warnings | Low | Fixed in latest commit — cosmetic only |
+| `OPENAI_API_KEY` missing → Content Studio hard stops | Medium | Page calls `st.stop()` — user sees error at top of page |
+| Audio extraction (ffmpeg) not auto-triggered after download | Medium | User must manually run audio extraction before transcription. There is no UI button for this — it's called internally but only from `extract_audio_for_downloaded_posts()` which has no Streamlit trigger |
+| No progress indication for multi-hour batch jobs | Low | Long batch scrapes or transcription runs have no ETA shown |
+| WAL file growth | Low | `reels.duckdb.wal` will grow with each write session. No auto-checkpoint UI. |
+
+---
+
+## Recommended next steps (for tomorrow's planning)
+
+### Quick wins (1–2 hours each)
+- [ ] Add an "Extract Audio" button to the Download Queue tab (Stage 2b currently has no UI trigger)
+- [ ] Move all pipeline trigger buttons to the home page as a step-by-step checklist with live status counts
+- [ ] Add a "What to do next" banner that detects your pipeline stage automatically
+
+### Medium effort (half day each)
+- [ ] Replace scattered pipeline controls with a single **Pipeline Dashboard** page showing all 5 stages with status + one-click triggers
+- [ ] Add proper empty-state messages on every page ("No data yet — go to Home and scrape some accounts first")
+
+### Larger refactor (1–2 days)
+- [ ] Rename pages to user-facing names (remove numbered prefixes)
+- [ ] Auto-run audio extraction immediately after download completes (no separate step)
+- [ ] Add a cost dashboard showing total Apify + Deepgram + OpenAI spend to date
