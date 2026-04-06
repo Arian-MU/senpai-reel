@@ -173,7 +173,54 @@ def init_db():
     )
     """)
 
+    # Phase 4 — Message units (knowledge extraction)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS message_units (
+        unit_id      TEXT PRIMARY KEY,
+        post_id      TEXT,
+        text         TEXT,
+        claim        TEXT,
+        advice       TEXT,
+        topic        TEXT,
+        subtopic     TEXT,
+        content_type TEXT,
+        confidence   DOUBLE,
+        source_start DOUBLE,
+        source_end   DOUBLE,
+        extracted_at TIMESTAMP,
+        model        TEXT,
+        embedding    FLOAT[1536],
+        embedded_at  TIMESTAMP
+    )
+    """)
+
+    # Phase 7 — Generated content
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS generated_content (
+        gen_id       TEXT PRIMARY KEY,
+        created_at   TIMESTAMP,
+        topic        TEXT,
+        content_type TEXT,
+        output_text  TEXT,
+        model        TEXT,
+        source_units TEXT[],
+        tokens_used  INTEGER,
+        cost_usd     DOUBLE
+    )
+    """)
+
     # Migration: add Phase 2 columns if they don't exist yet
+    for col, typedef in [
+        ("downloaded_at", "TIMESTAMP"),
+        ("file_size_mb", "DOUBLE"),
+        # Phase 4
+        ("extraction_cost_usd", "DOUBLE"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE transcripts ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass
+
     for col, typedef in [
         ("downloaded_at", "TIMESTAMP"),
         ("file_size_mb", "DOUBLE"),

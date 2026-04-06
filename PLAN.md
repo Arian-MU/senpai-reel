@@ -24,10 +24,10 @@
 | Phase 1 — Scraping Engine | `[x] Done` | `phase-1-scraping` |
 | Phase 2 — Media Acquisition | `[x] Done` | `phase-2-media` |
 | Phase 3 — Transcription | `[x] Done` | `phase-3-transcription` |
-| Phase 4 — Knowledge Extraction | `[ ] Not Started` | `phase-4-extraction` |
-| Phase 5 — Vector Search | `[ ] Not Started` | `phase-5-search` |
-| Phase 6 — Analytics | `[ ] Not Started` | `phase-6-analytics` |
-| Phase 7 — Content Studio | `[ ] Not Started` | `phase-7-content` |
+| Phase 4 — Knowledge Extraction | `[x] Done` | `phase-4-extraction` |
+| Phase 5 — Vector Search | `[x] Done` | `phase-5-search` |
+| Phase 6 — Analytics | `[x] Done` | `phase-6-analytics` |
+| Phase 7 — Content Studio | `[x] Done` | `phase-7-content` |
 | Phase 8 — QA & Testing | `[ ] Not Started` | `phase-8-qa` |
 | Phase 9 — Optimisation | `[ ] Not Started` | `phase-9-optimisation` |
 
