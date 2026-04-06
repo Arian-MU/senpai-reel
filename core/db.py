@@ -474,7 +474,7 @@ def upsert_post(account_id: str, item: dict) -> bool:
     else:
         conn.execute("""
             INSERT INTO posts VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
         """, (
             post_id,
@@ -498,6 +498,8 @@ def upsert_post(account_id: str, item: dict) -> bool:
             None,    # local_video_path
             None,    # local_audio_path
             "pending",
+            None,    # downloaded_at
+            None,    # file_size_mb
             json.dumps(item),
         ))
 

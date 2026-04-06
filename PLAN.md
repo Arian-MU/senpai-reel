@@ -28,7 +28,7 @@
 | Phase 5 — Vector Search | `[x] Done` | `phase-5-search` |
 | Phase 6 — Analytics | `[x] Done` | `phase-6-analytics` |
 | Phase 7 — Content Studio | `[x] Done` | `phase-7-content` |
-| Phase 8 — QA & Testing | `[ ] Not Started` | `phase-8-qa` |
+| Phase 8 — QA & Testing | `[x] Done` | `phase-8-qa` |
 | Phase 9 — Optimisation | `[ ] Not Started` | `phase-9-optimisation` |
 
 ---
@@ -543,18 +543,18 @@ Hashtags: #JobsAustralia #ATSTips #ResumeAdvice ...
 **Est. effort:** 2 days (spread across phases, not a single block)
 
 ### Tasks
-- [ ] `tests/test_scraper.py` — unit tests for deduplication logic, Apify response parsing
-- [ ] `tests/test_db.py` — test all DB insert/upsert functions with mock data
-- [ ] `tests/test_transcription.py` — mock Deepgram API, test transcript parsing
-- [ ] `tests/test_extraction.py` — mock GPT, test message unit parsing + taxonomy validation
-- [ ] `tests/test_search.py` — test cosine similarity with known vectors
-- [ ] `tests/test_content_gen.py` — mock GPT, test prompt rendering
-- [ ] Add `pytest` and `pytest-cov` to `requirements.txt`
-- [ ] Minimum 70% code coverage on `core/`, `processing/`, `analysis/`
+- [x] `tests/test_scraper.py` — unit tests for deduplication logic, Apify response parsing
+- [x] `tests/test_db.py` — test all DB insert/upsert functions with mock data
+- [x] `tests/test_transcription.py` — mock Deepgram API, test transcript parsing
+- [x] `tests/test_extraction.py` — mock GPT, test message unit parsing + taxonomy validation
+- [x] `tests/test_search.py` — test cosine similarity with known vectors
+- [x] `tests/test_content_gen.py` — mock GPT, test prompt rendering
+- [x] Add `pytest` and `pytest-cov` to `requirements.txt`
+- [x] Minimum 70% code coverage on `core/`, `processing/`, `analysis/`
 
 ### Acceptance Criteria
-- [ ] `pytest tests/` passes with 0 failures
-- [ ] Coverage report shows ≥ 70% on key modules
+- [x] `pytest tests/` passes with 0 failures (132 tests)
+- [x] Coverage report shows ≥ 70% on key modules (all Phase 1-8 files ≥ 75%)
 
 ---
 

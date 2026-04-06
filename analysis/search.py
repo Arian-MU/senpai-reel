@@ -53,19 +53,23 @@ def semantic_search(
     conn = get_connection()
     try:
         where_clauses = ["mu.embedding IS NOT NULL"]
-        params = []
+        where_params = []
 
         if topic_filter and topic_filter != "All":
             where_clauses.append("mu.topic = ?")
-            params.append(topic_filter)
+            where_params.append(topic_filter)
 
         if content_type_filter and content_type_filter != "All":
             where_clauses.append("mu.content_type = ?")
-            params.append(content_type_filter)
+            where_params.append(content_type_filter)
 
         where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
-        params.extend([query_vec, top_k])
+        # Parameter order must match the SQL left-to-right:
+        # 1. query_vec  → list_cosine_similarity(?, ...)  in SELECT
+        # 2. where_params → WHERE mu.topic = ?, etc.
+        # 3. top_k      → LIMIT ?
+        params = [query_vec] + where_params + [top_k]
 
         rows = conn.execute(
             f"""

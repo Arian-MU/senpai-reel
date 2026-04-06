@@ -114,7 +114,7 @@ def get_hashtag_intelligence(limit: int = 30) -> pd.DataFrame:
     from collections import Counter
     counter: Counter = Counter()
     for tags in df["hashtags"]:
-        if tags:
+        if tags is not None and len(tags) > 0:
             for tag in tags:
                 if tag:
                     counter[tag.lower().strip("#")] += 1
