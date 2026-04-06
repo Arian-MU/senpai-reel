@@ -125,6 +125,8 @@ def init_db():
         local_video_path TEXT,
         local_audio_path TEXT,
         download_status  TEXT DEFAULT 'pending',
+        downloaded_at    TIMESTAMP,
+        file_size_mb     DOUBLE,
         raw_json         JSON
     )
     """)
@@ -142,7 +144,22 @@ def init_db():
     )
     """)
 
+    # Migration: add Phase 2 columns if they don't exist yet
+    for col, typedef in [
+        ("downloaded_at", "TIMESTAMP"),
+        ("file_size_mb", "DOUBLE"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE posts ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass  # column already exists
+
     conn.close()
+
+
+def get_connection():
+    """Return a new DuckDB connection. Caller is responsible for closing it."""
+    return duckdb.connect(DB_PATH)
 
 
 # --------------------------------------------------------

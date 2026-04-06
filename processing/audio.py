@@ -1,0 +1,147 @@
+"""
+Phase 2 — Audio extractor.
+
+Converts downloaded MP4/video files to 16kHz mono WAV for Deepgram transcription.
+Uses ffmpeg subprocess — no Python audio library dependency.
+"""
+
+import subprocess
+import logging
+from pathlib import Path
+
+from core.db import get_connection
+
+logger = logging.getLogger(__name__)
+
+AUDIO_DIR = Path("audio_extracts")
+AUDIO_DIR.mkdir(exist_ok=True)
+
+
+def extract_audio(video_path: str, output_dir: str = "audio_extracts") -> dict:
+    """
+    Extract audio from a video file as 16kHz mono WAV.
+
+    Args:
+        video_path: Path to the downloaded .mp4 file
+        output_dir: Directory to write the .wav file
+
+    Returns:
+        dict with keys: success (bool), path (str|None), error (str|None)
+    """
+    src = Path(video_path)
+    if not src.exists():
+        return {"success": False, "path": None, "error": f"Video not found: {video_path}"}
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / f"{src.stem}.wav"
+
+    # Already extracted — skip
+    if dest.exists() and dest.stat().st_size > 1_000:
+        return {"success": True, "path": str(dest), "error": None}
+
+    cmd = [
+        "ffmpeg",
+        "-y",               # overwrite without prompting
+        "-i", str(src),
+        "-vn",              # no video stream
+        "-acodec", "pcm_s16le",
+        "-ar", "16000",     # 16 kHz sample rate (Deepgram requirement)
+        "-ac", "1",         # mono
+        str(dest),
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return {"success": False, "path": None, "error": result.stderr[-300:]}
+
+        if not dest.exists() or dest.stat().st_size < 1_000:
+            return {"success": False, "path": None, "error": "Output WAV is empty"}
+
+        return {"success": True, "path": str(dest), "error": None}
+
+    except subprocess.TimeoutExpired:
+        return {"success": False, "path": None, "error": "ffmpeg timed out after 120s"}
+    except FileNotFoundError:
+        return {"success": False, "path": None, "error": "ffmpeg not found — install with: brew install ffmpeg"}
+
+
+def extract_audio_for_post(post_id: str) -> dict:
+    """
+    Extract audio for a specific post_id.
+    Pulls local_video_path from DB, runs extraction, writes local_audio_path back.
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT local_video_path, local_audio_path FROM posts WHERE post_id = ?",
+        [post_id],
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return {"success": False, "path": None, "error": f"post_id {post_id} not found"}
+
+    video_path, existing_audio = row
+    if not video_path:
+        return {"success": False, "path": None, "error": "No local_video_path for this post"}
+
+    if existing_audio and Path(existing_audio).exists():
+        return {"success": True, "path": existing_audio, "error": None}
+
+    result = extract_audio(video_path)
+    if result["success"]:
+        _update_audio_path(post_id, result["path"])
+    return result
+
+
+def _update_audio_path(post_id: str, audio_path: str):
+    try:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE posts SET local_audio_path = ? WHERE post_id = ?",
+            [audio_path, post_id],
+        )
+        conn.close()
+    except Exception as e:
+        logger.error("Failed to update audio path for %s: %s", post_id, e)
+
+
+def extract_audio_for_downloaded_posts(progress_callback=None) -> dict:
+    """
+    Extract audio for all posts that are downloaded but missing audio.
+
+    Returns:
+        dict with done, failed, skipped counts
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT post_id, local_video_path FROM posts
+        WHERE download_status = 'done'
+          AND local_video_path IS NOT NULL
+          AND (local_audio_path IS NULL OR local_audio_path = '')
+        """,
+    ).fetchall()
+    conn.close()
+
+    total = len(rows)
+    done = failed = 0
+
+    for i, (post_id, video_path) in enumerate(rows):
+        result = extract_audio(video_path)
+        if result["success"]:
+            _update_audio_path(post_id, result["path"])
+            done += 1
+        else:
+            failed += 1
+            logger.warning("Audio extraction failed for %s: %s", post_id, result["error"])
+        if progress_callback:
+            progress_callback(i + 1, total, post_id)
+
+    return {"done": done, "failed": failed, "total": total}

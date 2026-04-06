@@ -12,6 +12,7 @@ st.set_page_config(
 from core.db import init_db, get_posts_stats, get_scrape_history
 from collection.scraper import scrape_and_store
 from collection.account_list import COMPETITOR_ACCOUNTS, DEFAULT_MAX_ITEMS
+from processing.download import download_pending_posts
 
 # Initialize DB once
 init_db()
@@ -32,7 +33,7 @@ c4.metric("Videos Downloaded", stats['downloaded'])
 st.markdown("---")
 
 # ── Two modes: single or batch ────────────────────────────────────────────────
-tab_single, tab_batch = st.tabs(["Single Account", "Batch Scrape"])
+tab_single, tab_batch, tab_download = st.tabs(["Single Account", "Batch Scrape", "📥 Download Queue"])
 
 # ── SINGLE ACCOUNT ────────────────────────────────────────────────────────────
 with tab_single:
@@ -107,6 +108,63 @@ with tab_batch:
                 }
                 for r in results
             ])
+
+# ── DOWNLOAD QUEUE ────────────────────────────────────────────────────────────
+with tab_download:
+    st.write("Download all pending video files and extract audio for Deepgram transcription.")
+
+    # Pending count
+    import duckdb as _ddb
+    _conn = _ddb.connect("reels.duckdb")
+    try:
+        pending_count = _conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE download_status = 'pending'"
+        ).fetchone()[0]
+        done_count = _conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE download_status = 'done'"
+        ).fetchone()[0]
+        failed_count = _conn.execute(
+            "SELECT COUNT(*) FROM posts WHERE download_status = 'failed'"
+        ).fetchone()[0]
+    except Exception:
+        pending_count = done_count = failed_count = 0
+    finally:
+        _conn.close()
+
+    dq1, dq2, dq3 = st.columns(3)
+    dq1.metric("⏳ Pending", pending_count)
+    dq2.metric("✅ Downloaded", done_count)
+    dq3.metric("❌ Failed", failed_count)
+
+    batch_dl_size = st.number_input("Batch size", min_value=1, max_value=100, value=20,
+                                     help="Number of videos to download in one run",
+                                     key="dl_batch_size")
+
+    if st.button("⬇️ Start Download Batch", type="primary", key="btn_download"):
+        if pending_count == 0:
+            st.info("No pending downloads.")
+        else:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            _results = {"done": 0, "failed": 0}
+
+            def _on_progress(done, total, post_id):
+                progress_bar.progress(done / total)
+                status_text.info(f"Downloading {done}/{total}: `{post_id}`")
+
+            with st.spinner("Downloading…"):
+                _results = download_pending_posts(
+                    batch_size=batch_dl_size,
+                    progress_callback=_on_progress,
+                )
+
+            status_text.empty()
+            progress_bar.empty()
+            st.success(
+                f"✅ Batch done — {_results['done']} downloaded, {_results['failed']} failed "
+                f"(of {_results['total']} attempted)"
+            )
+            st.rerun()
 
 # ── Scrape history ────────────────────────────────────────────────────────────
 st.markdown("---")

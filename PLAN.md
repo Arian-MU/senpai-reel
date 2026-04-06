@@ -21,8 +21,8 @@
 | Phase | Status | Branch |
 |-------|--------|--------|
 | Phase 0 — Foundation | `[x] Done` | `phase-0-foundation` |
-| Phase 1 — Scraping Engine | `[ ] Not Started` | `phase-1-scraping` |
-| Phase 2 — Media Acquisition | `[ ] Not Started` | `phase-2-media` |
+| Phase 1 — Scraping Engine | `[x] Done` | `phase-1-scraping` |
+| Phase 2 — Media Acquisition | `[x] Done` | `phase-2-media` |
 | Phase 3 — Transcription | `[ ] Not Started` | `phase-3-transcription` |
 | Phase 4 — Knowledge Extraction | `[ ] Not Started` | `phase-4-extraction` |
 | Phase 5 — Vector Search | `[ ] Not Started` | `phase-5-search` |
