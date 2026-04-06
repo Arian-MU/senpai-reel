@@ -1,5 +1,4 @@
 import streamlit as st
-import requests
 import json
 import duckdb
 
@@ -10,85 +9,116 @@ st.set_page_config(
     layout="wide"
 )
 
-from core.db import init_db, save_raw_scrape, save_structured_scrape
+from core.db import init_db, get_posts_stats, get_scrape_history
+from collection.scraper import scrape_and_store
+from collection.account_list import COMPETITOR_ACCOUNTS, DEFAULT_MAX_ITEMS
 
 # Initialize DB once
 init_db()
 
-# Load token
 APIFY_TOKEN = st.secrets["APIFY_TOKEN"]
-ACTOR_ID = "apify~instagram-reel-scraper"
 
-st.title("🎥 Instagram Reel Scraper")
-st.caption("Scrape competitor reels and store everything in the database.")
+st.title("🎥 Senpai Reel — Scraper")
+st.caption("Scrape competitor Instagram reels and store everything in the database.")
 
-st.info("💡 After scraping, use the **📊 Data Viewer** page in the sidebar to explore your data.")
+# ── Global stats bar ──────────────────────────────────────────────────────────
+stats = get_posts_stats()
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Total Posts in DB", f"{stats['total_posts']:,}")
+c2.metric("Creator Accounts", stats['accounts'])
+c3.metric("Avg Engagement", f"{stats['avg_engagement']:.2f}%")
+c4.metric("Videos Downloaded", stats['downloaded'])
 
-# Inputs
-col1, col2 = st.columns([3, 1])
-with col1:
-    username = st.text_input("Instagram Username", placeholder="e.g., resumeworded")
-with col2:
-    max_items = st.number_input("Max reels", min_value=1, max_value=200, value=10)
+st.markdown("---")
 
-run = st.button("🚀 Run Scraper", type="primary")
+# ── Two modes: single or batch ────────────────────────────────────────────────
+tab_single, tab_batch = st.tabs(["Single Account", "Batch Scrape"])
 
+# ── SINGLE ACCOUNT ────────────────────────────────────────────────────────────
+with tab_single:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        username = st.text_input("Instagram Username", placeholder="e.g., resumeworded",
+                                  key="single_username")
+    with col2:
+        max_items = st.number_input("Max reels", min_value=1, max_value=200, value=30,
+                                     key="single_max")
 
-# ---- Scraper Function ----
-def run_scraper(username: str, max_items: int):
-    url = f"https://api.apify.com/v2/acts/{ACTOR_ID}/run-sync-get-dataset-items?token={APIFY_TOKEN}"
+    if st.button("🚀 Scrape Account", type="primary", key="btn_single"):
+        if not username.strip():
+            st.error("Please enter a username.")
+        else:
+            handle = username.strip().lstrip("@")
+            with st.spinner(f"Scraping @{handle}… (10–60 sec)…"):
+                result = scrape_and_store(handle, APIFY_TOKEN, max_items)
 
-    instagram_url = f"https://www.instagram.com/{username}/"
+            if result["status"] == "done":
+                st.success(
+                    f"✅ @{handle}: {result['reels_found']} reels found, "
+                    f"{result['reels_new']} new"
+                )
+            else:
+                st.error(f"❌ @{handle}: {result['error']}")
 
-    payload = {
-        "username": [instagram_url],
-        "resultsLimit": max_items,
-        "skipPinnedPosts": False,
-        "includeSharesCount": False
-    }
+# ── BATCH SCRAPE ──────────────────────────────────────────────────────────────
+with tab_batch:
+    st.write("Scrape all competitor accounts from the curated list, or enter custom handles below.")
 
-    res = requests.post(url, json=payload)
-    res.raise_for_status()
-    return res.json()
+    default_handles = "\n".join(COMPETITOR_ACCOUNTS[:10])
+    handles_input = st.text_area(
+        "Accounts to scrape (one per line)",
+        value=default_handles,
+        height=200,
+        help="Paste any Instagram handles, one per line — no @ needed",
+    )
+    batch_max = st.number_input("Max reels per account", min_value=1, max_value=200,
+                                 value=DEFAULT_MAX_ITEMS, key="batch_max")
 
+    if st.button("🚀 Start Batch Scrape", type="primary", key="btn_batch"):
+        handles = [h.strip().lstrip("@") for h in handles_input.splitlines() if h.strip()]
+        if not handles:
+            st.error("No accounts entered.")
+        else:
+            st.write(f"Scraping **{len(handles)} accounts**…")
+            progress = st.progress(0)
+            results_placeholder = st.empty()
+            results = []
 
-# ---- Main Button Logic ----
-if run:
-    if not username:
-        st.error("Please enter a username.")
+            for i, handle in enumerate(handles):
+                results_placeholder.info(f"⏳ Scraping @{handle} ({i+1}/{len(handles)})…")
+                result = scrape_and_store(handle, APIFY_TOKEN, batch_max)
+                results.append(result)
+                progress.progress((i + 1) / len(handles))
+
+            results_placeholder.empty()
+
+            # Summary table
+            done = [r for r in results if r["status"] == "done"]
+            failed = [r for r in results if r["status"] == "failed"]
+
+            st.success(f"✅ Batch complete: {len(done)} succeeded, {len(failed)} failed")
+            st.table([
+                {
+                    "Account": f"@{r['username']}",
+                    "Status": "✅" if r["status"] == "done" else "❌",
+                    "Found": r["reels_found"],
+                    "New": r["reels_new"],
+                    "Error": r["error"] or "",
+                }
+                for r in results
+            ])
+
+# ── Scrape history ────────────────────────────────────────────────────────────
+st.markdown("---")
+with st.expander("📋 Scrape History (last 20 jobs)"):
+    history = get_scrape_history()
+    if history:
+        import pandas as pd
+        df = pd.DataFrame(history, columns=[
+            "job_id", "username", "started_at", "finished_at",
+            "reels_found", "reels_new", "status", "error_msg"
+        ])
+        df = df.drop(columns=["job_id"]).head(20)
+        st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        with st.spinner(f"Scraping @{username}… this takes ~10–30 seconds…"):
-            try:
-                data = run_scraper(username, max_items)
-            except Exception as e:
-                st.error(f"Scraper error: {e}")
-                st.stop()
-
-        st.success(f"✅ Scraping complete — {len(data)} reels returned")
-
-        # Save raw (deduplicates by shortCode) + always process structured
-        with st.spinner("Saving to database…"):
-            result_msg = save_raw_scrape(username, data)
-            save_structured_scrape(username, data)
-
-        st.success(f"💾 Saved: {result_msg}")
-
-        # Quick stats
-        conn = duckdb.connect("reels.duckdb")
-        reel_count = conn.execute(
-            "SELECT COUNT(*) FROM reels WHERE profile = ?", (username,)
-        ).fetchone()[0]
-        comment_count = conn.execute(
-            "SELECT COUNT(*) FROM comments c JOIN reels r ON c.reel_id = r.reel_id WHERE r.profile = ?",
-            (username,)
-        ).fetchone()[0]
-        conn.close()
-
-        st.info(f"📈 @{username} in DB: **{reel_count} reels**, **{comment_count} comments**")
-
-        st.download_button(
-            label="⬇️ Download JSON",
-            data=json.dumps(data, indent=2),
-            file_name=f"{username}_reels.json",
-            mime="application/json"
-        )
+        st.info("No scrape jobs yet.")
